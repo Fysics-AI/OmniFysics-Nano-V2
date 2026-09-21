@@ -49,9 +49,9 @@ class Qwen2VLTemplate(MultimodalChatTemplate):
         self.video_pad = "<|video_pad|>"
         self.image_token_id = self.tokenizer.convert_tokens_to_ids(self.image_pad)
         self.video_token_id = self.tokenizer.convert_tokens_to_ids(self.video_pad)
-        self.image_start_id = self.tokenizer.convert_tokens_to_ids("<|vision_start|>")  # 151652
-        self.image_end_id = self.tokenizer.convert_tokens_to_ids("<|vision_end|>")  # 151653
-        self.eos = self.tokenizer.encode("<|im_end|>\n", add_special_tokens=False)  # [151645, 198]
+        self.image_start_id = self.tokenizer.convert_tokens_to_ids("<|vision_start|>")
+        self.image_end_id = self.tokenizer.convert_tokens_to_ids("<|vision_end|>")
+        self.eos = self.tokenizer.encode("<|im_end|>\n", add_special_tokens=False)
         self.bos = self.tokenizer.encode("<|im_start|>", add_special_tokens=False)
 
         logger.info_rank0("Qwen2VLTemplate will not truncate sequence when longer than [max_seq_lens].")
@@ -73,7 +73,7 @@ class Qwen2VLTemplate(MultimodalChatTemplate):
         pass
 
 
-class Qwen2VLPretrainTemplate(Qwen2VLTemplate):  # For Omni Only
+class Qwen2VLPretrainTemplate(Qwen2VLTemplate):
     def encode_messages(
         self, conversations: Sequence[Dict[str, str]], num_tokens: Dict[str, List[int]] = defaultdict(list), **kwargs
     ) -> Dict[str, List[int]]:
@@ -108,9 +108,9 @@ class Qwen2VLPretrainTemplate(Qwen2VLTemplate):  # For Omni Only
             content_str = message["content"].strip()
             content_ids = self.tokenizer.encode(content_str, add_special_tokens=False)
             loss_mask = message["loss_mask"]
-            if content_str == "":  # eval
+            if content_str == "":
                 break
-            if role == "user" and data_type == "t2i" and self._unconditioned_generation:  # unconditioned generation
+            if role == "user" and data_type == "t2i" and self._unconditioned_generation:
                 input_ids += [self.tokenizer.pad_token_id] * len(content_ids)
             else:
                 input_ids += content_ids
@@ -127,16 +127,15 @@ class Qwen2VLPretrainTemplate(Qwen2VLTemplate):  # For Omni Only
         tokenized_example = {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
         tokenized_example = {k: torch.tensor(v) for k, v in tokenized_example.items()}
 
-        # change qwen2vl_tokenized_image_id to seedomni_image_id
         image_mask = tokenized_example["input_ids"] == self.image_token_id
         input_mask = tokenized_example["labels"] == IGNORE_INDEX
         input_image_mask = image_mask & input_mask
         output_image_mask = image_mask & ~input_mask
         tokenized_example["input_ids"][input_image_mask] = TYPE2INDEX["input"]["image"]
         tokenized_example["input_ids"][output_image_mask] = TYPE2INDEX["output"]["image"]
-        tokenized_example["labels"][output_image_mask] = IGNORE_INDEX  # the label will be filled in decoder.
+        tokenized_example["labels"][output_image_mask] = IGNORE_INDEX
 
-        if data_type == "t2i":  # t2i doesn't train <|vision_start|> and <|vision_end|>
+        if data_type == "t2i":
             labels = tokenized_example["labels"]
             labels[~output_image_mask] = IGNORE_INDEX
             tokenized_example["labels"] = labels
@@ -195,7 +194,7 @@ class Qwen2VLChatTemplate(Qwen2VLTemplate):
                 content_ids = self.tokenizer.encode(content_str, add_special_tokens=False)
                 if (
                     role == "user" and data_type == "t2i" and self._unconditioned_generation
-                ):  # unconditioned generation
+                ):
                     message_ids += [self.tokenizer.pad_token_id] * len(content_ids) + end_ids
                 else:
                     message_ids += content_ids + end_ids
@@ -210,7 +209,6 @@ class Qwen2VLChatTemplate(Qwen2VLTemplate):
         tokenized_example = {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
         tokenized_example = {k: torch.tensor(v) for k, v in tokenized_example.items()}
 
-        # change qwen2vl tokenized_image/video_id to seedomni_image/video_id
         image_mask = tokenized_example["input_ids"] == self.image_token_id
         input_mask = tokenized_example["labels"] == IGNORE_INDEX
         input_image_mask = image_mask & input_mask
@@ -220,8 +218,8 @@ class Qwen2VLChatTemplate(Qwen2VLTemplate):
 
         video_mask = tokenized_example["input_ids"] == self.video_token_id
         tokenized_example["input_ids"][video_mask] = TYPE2INDEX["input"]["video"]
-        tokenized_example["labels"][output_image_mask] = IGNORE_INDEX  # the label will be filled in decoder.
-        if data_type == "t2i":  # t2i doesn't train <|vision_start|>
+        tokenized_example["labels"][output_image_mask] = IGNORE_INDEX
+        if data_type == "t2i":
             labels = tokenized_example["labels"]
             labels[labels == self.image_start_id] = IGNORE_INDEX
             tokenized_example["labels"] = labels
@@ -232,7 +230,6 @@ class Qwen2VLChatTemplate(Qwen2VLTemplate):
 class Qwen3VLChatTemplate(Qwen2VLTemplate):
     system_prompt = "You are a helpful assistant."
 
-    # Qwen3-VL default temporal_patch_size
     MERGE_SIZE = 2
 
     def _get_system_mesage(self):
@@ -243,25 +240,20 @@ class Qwen3VLChatTemplate(Qwen2VLTemplate):
         }
         return system_message
 
-    # ================= [New: Official Timestamp Calculation Logic] =================
     def _calculate_timestamps(self, indices: List[int], video_fps: float, merge_size: int = 2):
         """
         Replicates Qwen3-VL official logic: Pad -> Convert to Seconds -> Average.
         """
-        # 1. Pad frame indices to be divisible by merge_size
         if len(indices) % merge_size != 0:
             indices.extend([indices[-1]] * (merge_size - len(indices) % merge_size))
 
-        # 2. Convert indices to timestamps (seconds)
         timestamps = [idx / video_fps for idx in indices]
 
-        # 3. Merge by size and take the average of start/end timestamps for each chunk
         timestamps = [
             (timestamps[i] + timestamps[i + merge_size - 1]) / 2 for i in range(0, len(timestamps), merge_size)
         ]
         return timestamps
 
-    # ===============================================================================
 
     def encode_messages(
         self, conversations: Sequence[Dict[str, str]], num_tokens: Dict[str, List[int]] = defaultdict(list), **kwargs
@@ -272,7 +264,6 @@ class Qwen3VLChatTemplate(Qwen2VLTemplate):
         image_token_num_list = iter(num_tokens.pop("image", []))
         video_token_num_list = iter(num_tokens.pop("video", []))
 
-        # Retrieve video metadata iterator; ensures order matches video inputs in conversations
         video_metadata_list = iter(kwargs.get("video_metadata", []))
 
         for message in conversations:
@@ -283,42 +274,33 @@ class Qwen3VLChatTemplate(Qwen2VLTemplate):
                     content += value[1]
                 elif value[0] == "image":
                     data_type = "t2i" if role == "assistant" else "i2t"
-                    # Assumes self.image_pattern returns Qwen2-VL style image padding
                     content += self.image_pattern(next(image_token_num_list))
 
                 elif value[0] == "video":
-                    # --- [Core Modification: Video Timestamp Processing] ---
                     try:
                         total_video_tokens = next(video_token_num_list)
                     except StopIteration:
                         raise ValueError("Video token number is missing for a video input.")
 
-                    # Get metadata for the current video
                     try:
                         v_meta = next(video_metadata_list)
                     except StopIteration:
                         raise ValueError("Video metadata is missing for a video input.")
 
-                    # 1. Extract FPS (default to 2.0 if missing)
                     fps = v_meta.fps if v_meta.fps is not None else 2.0
 
-                    # 2. Retrieve sampled frame indices
                     if hasattr(v_meta, "frames_indices") and v_meta.frames_indices is not None:
                         indices = v_meta.frames_indices
-                        # Convert numpy array to list if necessary
                         if hasattr(indices, "tolist"):
                             indices = indices.tolist()
                         elif not isinstance(indices, list):
                             indices = list(indices)
                     else:
-                        # Fallback: create indices based on total frame count
                         total_frames = v_meta.total_num_frames if v_meta.total_num_frames is not None else 16
                         indices = list(range(total_frames))
 
-                    # 3. Calculate timestamps using the new logic
                     timestamps = self._calculate_timestamps(indices, fps, merge_size=self.MERGE_SIZE)
 
-                    # 4. Calculate visual tokens per time chunk
                     num_time_chunks = len(timestamps)
 
                     if num_time_chunks > 0:
@@ -326,17 +308,14 @@ class Qwen3VLChatTemplate(Qwen2VLTemplate):
                     else:
                         tokens_per_chunk = 0
 
-                    # 5. Construct Qwen3-VL style video string
-                    # Format: <t seconds><|vision_start|>...tokens...<|vision_end|>
                     video_str_buffer = ""
                     for t_val in timestamps:
                         video_str_buffer += f"<{float(t_val):.1f} seconds>"
-                        video_str_buffer += "<|vision_start|>"  # self.vision_start_token
+                        video_str_buffer += "<|vision_start|>"
                         video_str_buffer += "<|video_pad|>" * tokens_per_chunk
                         video_str_buffer += "<|vision_end|>"
 
                     content += video_str_buffer
-                    # --- [End Modification] ---
 
                 else:
                     raise ValueError(f"Unknown value type: {value[0]}")
@@ -349,7 +328,6 @@ class Qwen3VLChatTemplate(Qwen2VLTemplate):
                 }
             )
 
-        # Standard logic to convert messages to input_ids (kept largely unchanged)
         input_ids, attention_mask, labels = [], [], []
         for message in messages:
             content_str = message["content"].strip()
@@ -359,7 +337,6 @@ class Qwen3VLChatTemplate(Qwen2VLTemplate):
 
             if content_str:
                 end_ids = self.tokenizer.encode("<|im_end|>\n", add_special_tokens=False)
-                # Note: content_str now contains expanded timestamps and video pads
                 content_ids = self.tokenizer.encode(content_str, add_special_tokens=False)
 
                 if role == "user" and data_type == "t2i" and self._unconditioned_generation:
@@ -377,8 +354,6 @@ class Qwen3VLChatTemplate(Qwen2VLTemplate):
         tokenized_example = {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
         tokenized_example = {k: torch.tensor(v) for k, v in tokenized_example.items()}
 
-        # ID replacement logic
-        # Note: video_mask logic remains valid as self.video_token_id maps to <|video_pad|>
         image_mask = tokenized_example["input_ids"] == self.image_token_id
         input_mask = tokenized_example["labels"] == IGNORE_INDEX
         input_image_mask = image_mask & input_mask
@@ -677,19 +652,18 @@ class Qwen25OmniChatTemplate(Qwen2VLChatTemplate):
         self.audio_bos_token = "<|audio_bos|>"
         self.audio_eos_token = "<|audio_eos|>"
 
-        self.image_token_id = self.tokenizer.convert_tokens_to_ids(self.image_pad)  # 151655
-        self.video_token_id = self.tokenizer.convert_tokens_to_ids(self.video_pad)  # 151656
-        self.audio_token_id = self.tokenizer.convert_tokens_to_ids(self.audio_pad)  # 151646
+        self.image_token_id = self.tokenizer.convert_tokens_to_ids(self.image_pad)
+        self.video_token_id = self.tokenizer.convert_tokens_to_ids(self.video_pad)
+        self.audio_token_id = self.tokenizer.convert_tokens_to_ids(self.audio_pad)
 
-        self.vision_bos_id = self.tokenizer.convert_tokens_to_ids(self.vision_bos_token)  # 151652
-        self.vision_eos_id = self.tokenizer.convert_tokens_to_ids(self.vision_eos_token)  # 151653
-        self.audio_bos_id = self.tokenizer.convert_tokens_to_ids(self.audio_bos_token)  # 151647
-        self.audio_eos_id = self.tokenizer.convert_tokens_to_ids(self.audio_eos_token)  # 151648
+        self.vision_bos_id = self.tokenizer.convert_tokens_to_ids(self.vision_bos_token)
+        self.vision_eos_id = self.tokenizer.convert_tokens_to_ids(self.vision_eos_token)
+        self.audio_bos_id = self.tokenizer.convert_tokens_to_ids(self.audio_bos_token)
+        self.audio_eos_id = self.tokenizer.convert_tokens_to_ids(self.audio_eos_token)
 
         self.bos = self.tokenizer.encode("<|im_start|>", add_special_tokens=False)
-        self.eos = self.tokenizer.encode("<|im_end|>\n", add_special_tokens=False)  # [151645, 198]
+        self.eos = self.tokenizer.encode("<|im_end|>\n", add_special_tokens=False)
 
-        # TODO: maybe customized these
         self.seconds_per_chunk = 2.0
         self.position_id_per_seconds = 25
         self.video_second_per_grid = 1.0
@@ -718,7 +692,7 @@ class Qwen25OmniChatTemplate(Qwen2VLChatTemplate):
     def video_pattern(
         self, video_token_num: torch.Tensor, audio_token_num: torch.Tensor, curr_video_grid_thw: torch.Tensor
     ):
-        if audio_token_num == 0:  # no audio with this video
+        if audio_token_num == 0:
             return self.vision_bos_token + self.video_pad * video_token_num + self.vision_eos_token
         else:
             """Modified from processing_qwen2_5_omni.py
@@ -754,7 +728,7 @@ class Qwen25OmniChatTemplate(Qwen2VLChatTemplate):
     ) -> Dict[str, List[int]]:
         sys_msg = self._get_system_mesage()
         messages = [] if sys_msg is None else [sys_msg]
-        multimodal_num_tokens = {key: iter(item) for key, item in num_tokens.items()}  # image, video, audio
+        multimodal_num_tokens = {key: iter(item) for key, item in num_tokens.items()}
 
         video_grid_thw = kwargs.get("grid_thw", {}).get("video", None)
         video_grid_thw = iter(video_grid_thw) if video_grid_thw is not None else None
@@ -810,7 +784,6 @@ class Qwen25OmniChatTemplate(Qwen2VLChatTemplate):
         tokenized_example = {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
         tokenized_example = {k: torch.tensor(v) for k, v in tokenized_example.items()}
 
-        # change qwen25omni tokenized_image/video/audio_id to seedomni_image/video/audio_id
         input_mask = tokenized_example["labels"] == IGNORE_INDEX
 
         image_mask = tokenized_example["input_ids"] == self.image_token_id
@@ -819,14 +792,13 @@ class Qwen25OmniChatTemplate(Qwen2VLChatTemplate):
         tokenized_example["input_ids"][input_image_mask] = TYPE2INDEX["input"]["image"]
         tokenized_example["input_ids"][output_image_mask] = TYPE2INDEX["output"]["image"]
 
-        # no video/audio output currently
         video_mask = tokenized_example["input_ids"] == self.video_token_id
         tokenized_example["input_ids"][video_mask] = TYPE2INDEX["input"]["video"]
 
         audio_mask = tokenized_example["input_ids"] == self.audio_token_id
         tokenized_example["input_ids"][audio_mask] = TYPE2INDEX["input"]["audio"]
 
-        tokenized_example["labels"][output_image_mask] = IGNORE_INDEX  # the label will be filled in decoder.
+        tokenized_example["labels"][output_image_mask] = IGNORE_INDEX
         return tokenized_example
 
 
@@ -846,7 +818,7 @@ class JanusChatTemplate(ChatmlTemplate):
         )
         self.tokenizer.add_special_tokens({"additional_special_tokens": [self.image_pad]})
         self.sep1 = "\n\n"
-        self.sep2 = "<｜end▁of▁sentence｜>"  # eos
+        self.sep2 = "<｜end▁of▁sentence｜>"
         self.eos = self.tokenizer.encode(self.sep2, add_special_tokens=False)
 
     def image_pattern(self, token_num):
@@ -922,18 +894,18 @@ class JanusChatTemplate(ChatmlTemplate):
         output_image_mask = image_mask & ~input_mask
         tokenized_example["input_ids"][input_image_mask] = TYPE2INDEX["input"]["image"]
         tokenized_example["input_ids"][output_image_mask] = TYPE2INDEX["output"]["image"]
-        tokenized_example["labels"][output_image_mask] = IGNORE_INDEX  # the label will be filled in decoder.
+        tokenized_example["labels"][output_image_mask] = IGNORE_INDEX
         if not use_system_prompt:
             tokenized_example["labels"][tokenized_example["labels"] == self.eos[0]] = (
-                IGNORE_INDEX  # eos seems not trained in Janus
+                IGNORE_INDEX
             )
             tokenized_example["labels"][tokenized_example["labels"] == self.image_start_id] = (
-                IGNORE_INDEX  # image_start_id seems not trained in Janus
+                IGNORE_INDEX
             )
         return tokenized_example
 
 
-class LlamaPretrainTemplate(MultimodalChatTemplate):  # For Omni Only
+class LlamaPretrainTemplate(MultimodalChatTemplate):
     def __init__(self, tokenizer: PreTrainedTokenizer, **kwargs) -> None:
         super().__init__(tokenizer)
         self.vision_bos_token = "<|vision_start|>"
@@ -957,12 +929,12 @@ class LlamaPretrainTemplate(MultimodalChatTemplate):  # For Omni Only
         self.video_token_id = self.tokenizer.convert_tokens_to_ids(self.video_pad)
         self.audio_token_id = self.tokenizer.convert_tokens_to_ids(self.audio_pad)
 
-        self.vision_bos_id = self.tokenizer.convert_tokens_to_ids("<|vision_start|>")  # 128256
-        self.vision_eos_id = self.tokenizer.convert_tokens_to_ids("<|vision_end|>")  # 128257
+        self.vision_bos_id = self.tokenizer.convert_tokens_to_ids("<|vision_start|>")
+        self.vision_eos_id = self.tokenizer.convert_tokens_to_ids("<|vision_end|>")
         self.audio_bos_id = self.tokenizer.convert_tokens_to_ids("<|audio_start|>")
         self.audio_eos_id = self.tokenizer.convert_tokens_to_ids("<|audio_end|>")
 
-        self.pad_token_id = self.tokenizer.convert_tokens_to_ids("<|pad|>")  # 128258
+        self.pad_token_id = self.tokenizer.convert_tokens_to_ids("<|pad|>")
 
         if self.add_token_num > 0:
             self.trained_embedding = [
@@ -973,13 +945,12 @@ class LlamaPretrainTemplate(MultimodalChatTemplate):  # For Omni Only
                 self.pad_token_id,
             ]
 
-        # config for audio in video
         self.seconds_per_chunk = 2.0
         self.position_id_per_seconds = 25
         self.video_second_per_grid = 1.0
 
-        self.eos = self.tokenizer.encode(self.tokenizer.eos_token, add_special_tokens=False)  # [128001]
-        self.bos = self.tokenizer.encode(self.tokenizer.bos_token, add_special_tokens=False)  # [128000]
+        self.eos = self.tokenizer.encode(self.tokenizer.eos_token, add_special_tokens=False)
+        self.bos = self.tokenizer.encode(self.tokenizer.bos_token, add_special_tokens=False)
         self.cfg_ratio = kwargs.get("cfg_ratio", None)
 
     def image_pattern(self, token_num):
@@ -1004,7 +975,7 @@ class LlamaPretrainTemplate(MultimodalChatTemplate):  # For Omni Only
     def video_pattern(
         self, video_token_num: torch.Tensor, audio_token_num: torch.Tensor, curr_video_grid_thw: torch.Tensor
     ):
-        if audio_token_num == 0:  # no audio with this video
+        if audio_token_num == 0:
             return self.vision_bos_token + self.video_pad * video_token_num + self.vision_eos_token
         else:
             """Modified from processing_qwen2_5_omni.py
@@ -1043,7 +1014,7 @@ class LlamaPretrainTemplate(MultimodalChatTemplate):  # For Omni Only
         self, conversations: Sequence[Dict[str, str]], num_tokens: Dict[str, List[int]] = defaultdict(list), **kwargs
     ) -> Dict[str, List[int]]:
         messages = []
-        multimodal_num_tokens = {key: iter(item) for key, item in num_tokens.items()}  # image, video, audio
+        multimodal_num_tokens = {key: iter(item) for key, item in num_tokens.items()}
         data_type = ""
         video_grid_thw = kwargs.get("grid_thw", {}).get("video", None)
         video_grid_thw = iter(video_grid_thw) if video_grid_thw is not None else None
@@ -1089,9 +1060,9 @@ class LlamaPretrainTemplate(MultimodalChatTemplate):  # For Omni Only
             content_str = message["content"].strip()
             content_ids = self.tokenizer.encode(content_str, add_special_tokens=False)
             loss_mask = message["loss_mask"]
-            if content_str == "":  # eval
+            if content_str == "":
                 break
-            if role == "user" and data_type == "t2i" and self._unconditioned_generation:  # unconditioned generation
+            if role == "user" and data_type == "t2i" and self._unconditioned_generation:
                 input_ids += [self.pad_token_id] * len(content_ids)
             else:
                 input_ids += content_ids
@@ -1108,7 +1079,6 @@ class LlamaPretrainTemplate(MultimodalChatTemplate):  # For Omni Only
         tokenized_example = {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
         tokenized_example = {k: torch.tensor(v) for k, v in tokenized_example.items()}
 
-        # change to seedomni_image_id
         input_mask = tokenized_example["labels"] == IGNORE_INDEX
         image_mask = tokenized_example["input_ids"] == self.image_token_id
 
@@ -1117,16 +1087,15 @@ class LlamaPretrainTemplate(MultimodalChatTemplate):  # For Omni Only
         tokenized_example["input_ids"][input_image_mask] = TYPE2INDEX["input"]["image"]
         tokenized_example["input_ids"][output_image_mask] = TYPE2INDEX["output"]["image"]
 
-        # no video/audio output currently
         video_mask = tokenized_example["input_ids"] == self.video_token_id
         tokenized_example["input_ids"][video_mask] = TYPE2INDEX["input"]["video"]
 
         audio_mask = tokenized_example["input_ids"] == self.audio_token_id
         tokenized_example["input_ids"][audio_mask] = TYPE2INDEX["input"]["audio"]
 
-        tokenized_example["labels"][output_image_mask] = IGNORE_INDEX  # the label will be filled in decoder.
+        tokenized_example["labels"][output_image_mask] = IGNORE_INDEX
 
-        if data_type == "t2i":  # t2i doesn't train <|vision_start|> and <|vision_end|>
+        if data_type == "t2i":
             labels = tokenized_example["labels"]
             labels[~output_image_mask] = IGNORE_INDEX
             tokenized_example["labels"] = labels
@@ -1220,7 +1189,6 @@ class SeedOssPretrainTemplate(LlamaPretrainTemplate):
                 self.pad_token_id,
             ]
 
-        # config for audio in video
         self.seconds_per_chunk = 2.0
         self.position_id_per_seconds = 25
         self.video_second_per_grid = 1.0
@@ -1237,7 +1205,7 @@ TEMPLATES = {
     "qwen35omni": Qwen35OmniChatTemplate,
     "qwen2vl_pretrain": Qwen2VLPretrainTemplate,
     "qwen2_5omni": Qwen25OmniChatTemplate,
-    "qwen2_5vl": Qwen2VLChatTemplate,  # same as qwen2vl
+    "qwen2_5vl": Qwen2VLChatTemplate,
     "janus": JanusChatTemplate,
     "llama": LlamaPretrainTemplate,
     "qwen3moe": Qwen3MoeChatTemplate,

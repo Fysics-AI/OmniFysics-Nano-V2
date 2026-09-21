@@ -58,10 +58,6 @@ class Qwen2EncoderAdapter(nn.Module):
     def forward_one_step(self, xs, masks, cache=None):
         outs = self.model(
             inputs_embeds=xs,
-            # The autoregressive path is unpadded. Transformers can derive
-            # the causal mask from the KV-cache length; passing a [B, 1]
-            # mask after the prefill is interpreted differently across
-            # Transformers versions.
             attention_mask=None,
             output_hidden_states=True,
             return_dict=True,
@@ -141,7 +137,6 @@ class TextQueryCrossAttentionBridge(nn.Module):
         self.k_proj = nn.Linear(hidden_size, hidden_size)
         self.v_proj = nn.Linear(hidden_size, hidden_size)
         self.out_proj = nn.Linear(hidden_size, hidden_size)
-        # FSDP1 cannot shard scalar parameters; keep one element while preserving broadcast semantics.
         self.gate = nn.Parameter(torch.empty(1))
 
     def _query_position_encoding(

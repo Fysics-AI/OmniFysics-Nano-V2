@@ -20,7 +20,6 @@ from transformers import PretrainedConfig, PreTrainedModel
 
 class BaseFoundationConfigMixin(PretrainedConfig, ABC):
     def __init__(self, vocab_size: int = 0, hidden_size: int = 0, tie_word_embeddings: bool = None, **kwargs):
-        # A Foundation model must contain `vocab_size`, `hidden_size`, and `tie_word_embeddings`
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.tie_word_embeddings = tie_word_embeddings

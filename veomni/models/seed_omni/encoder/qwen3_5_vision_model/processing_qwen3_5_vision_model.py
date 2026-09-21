@@ -20,8 +20,6 @@ VIDEO_PROCESS_KWARGS = set(Qwen3VLVideoProcessor.valid_kwargs.__annotations__.ke
 class Qwen35VisionModelProcessor(BaseEncoderProcessorMixin):
     attributes = ["image_processor", "video_processor"]
     optional_attributes = BaseEncoderProcessorMixin.optional_attributes
-    # Transformers >= 5 expects a single class name here. The exported
-    # processor config uses the Fast implementation.
     image_processor_class = "Qwen2VLImageProcessorFast"
     video_processor_class = "Qwen3VLVideoProcessor"
     valid_kwargs = BaseEncoderProcessorMixin.valid_kwargs + sorted(
@@ -51,13 +49,11 @@ class Qwen35VisionModelProcessor(BaseEncoderProcessorMixin):
         min_pixels: int = 56 * 56,
         max_pixels: int = 28 * 28 * 1280,
         patch_size: int = 16,
-        temporal_patch_size: int = 2, ###
+        temporal_patch_size: int = 2,
         merge_size: int = 2,
         min_frames: int = 4,
         max_frames: int = 768,
         max_input_frames: Optional[int] = None,
-        # fps 是视频采样策略，它只在“processor 自己负责从原始视频再采样”时才有意义。
-        # 现在已经把默认改成 do_sample_frames=False，所以如果传入的是“已经抽好的帧序列”，processor 只负责把这串帧 patchify，不会再假定 2fps 去重采样。
         do_sample_frames: bool = False, 
         fps: Union[int, float, None] = None,
         size: Optional[dict] = None,

@@ -50,14 +50,14 @@ def build_vit_decoder(
                 intermediate_size=hidden_dim * 4,
                 image_size=32,
                 patch_size=1,
-                num_channels=input_dim,  # Input feature channel size
+                num_channels=input_dim,
             )
             self.projector = torch.nn.Linear(hidden_dim, output_dim)
             self.model = ViTModel(vit_config)
 
         def forward(self, x):
             x = self.model(x).last_hidden_state
-            x = x[:, 1:, :]  # skip cls_token
+            x = x[:, 1:, :]
             return self.projector(x)
 
     return ViT()

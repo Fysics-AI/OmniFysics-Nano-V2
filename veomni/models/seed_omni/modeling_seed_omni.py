@@ -41,12 +41,6 @@ if TYPE_CHECKING:
 
 
 def extract_model_inputs(prefix: str, kwargs: Dict[str, "torch.Tensor"]):
-    # 从统一的 kwargs 中抽取某个模态/方向对应的子输入。
-    # 例如 prefix="image_input_" 时：
-    #   image_input_features -> features
-    #   image_input_grid_thw -> grid_thw
-    #   image_input_mask -> mask
-    # 这样后续就可以直接把结果传给对应 encoder 的 lm_encode()。
     model_inputs = {}
     for key, value in kwargs.items():
         if key.startswith(prefix):
@@ -95,8 +89,6 @@ class SeedOmniPreTrainedModel(PreTrainedModel):
 
     @property
     def all_tied_weights_keys(self):
-        # Newer transformers device_map inference reads this attribute before
-        # tie_weights() has populated it on custom models.
         expanded_tied_weights = self.get_expanded_tied_weights_keys(all_submodels=False)
         dynamic_tied_weights = getattr(self, "_dynamic_tied_weights_keys", None) or []
         for key in dynamic_tied_weights:
@@ -134,7 +126,7 @@ class SeedOmniEncoderModel(SeedOmniPreTrainedModel):
                 config.image_config, attn_implementation=config._attn_implementation, torch_dtype=torch_dtype
             )
             self.modality.append("image")
-            self.modality.append("video")  # image encoder could be used for video embedding
+            self.modality.append("video")
 
         if config.video_config.model_type:
             model_cls = get_model_class(config.video_config)
@@ -159,41 +151,24 @@ class SeedOmniEncoderModel(SeedOmniPreTrainedModel):
                 module.set_projector_trainable_only()
 
     def image_forward(self, inputs_embeds: torch.Tensor, decoder_inputs, **kwargs):
-        # 处理“输入图像”：
-        # 1. 从 kwargs 中取出 image_input_* 字段
-        # 2. 调用视觉 encoder 得到图像 token 对应的 embedding
-        # 3. 用 image_input_mask 指示的位置，把这些 embedding 写回文本序列的 inputs_embeds
         if self.encode_input:
             input_image_inputs = extract_model_inputs("image_input_", kwargs)
-            # mask 的长度与文本序列长度一致，值为 True 的位置表示“这里应该放图像 embedding”
             input_image_mask: torch.Tensor = input_image_inputs.pop("mask", None)
             if input_image_inputs:
-                # 这里的 input_image_inputs 一般包含：
-                #   features: processor 预处理后的视觉 patch 张量
-                #   grid_thw: 视觉 token 的 T/H/W 网格信息
                 input_image_features: torch.Tensor = self.image_encoder.lm_encode(**input_image_inputs).to(
                     inputs_embeds
                 )
                 if get_runtime_state().sp_enabled:
-                    # 开启 Sequence Parallel 时，encoder 输出需要转换到当前 SP 分片布局
                     input_image_features = identity_layout(
                         input_image_features, seq_dim=0, head_dim=1, group=get_runtime_state().sp_group
                     )
-                # encoder 可能因为 padding / dummy 数据返回额外 token，这里只截取真正会写回序列的位置数
                 input_image_features = input_image_features[: input_image_mask.sum()]
-                # masked_scatter 需要 mask 形状与 inputs_embeds 一致，因此把 [bs, seq] 扩展成 [bs, seq, hidden]
                 image_mask = input_image_mask.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
-                # 将图像 encoder 的输出写回文本 embedding 序列，完成多模态融合
                 inputs_embeds = inputs_embeds.masked_scatter(image_mask, input_image_features)
             elif self.training and _has_trainable_parameters(self.image_encoder):
-                # 训练时即使当前 batch 没有图像，也走一遍 dummy 分支，
-                # 以保证图像 encoder 所在参数图不会完全断开。
                 dummy_embeds: torch.Tensor = self.image_encoder.lm_dummy_encode()
                 inputs_embeds += dummy_embeds.mean() * 0.0
 
-        # 处理“输出图像”：
-        # 这通常用于图像生成 / 图像重建等任务，把目标图像也编码成 token embedding，
-        # 并写回到输出占位符所在的位置。
         if self.encode_output:
             output_image_inputs = extract_model_inputs("image_output_", kwargs)
             output_image_mask: torch.Tensor = output_image_inputs.pop("mask", None)
@@ -208,8 +183,6 @@ class SeedOmniEncoderModel(SeedOmniPreTrainedModel):
                 output_image_features = output_image_features[: output_image_mask.sum()]
                 image_mask = output_image_mask.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
                 inputs_embeds = inputs_embeds.masked_scatter(image_mask, output_image_features)
-                # 对 encoder 版本的输出图像，这里直接把目标 embedding 存下来，
-                # 后续 decoder/foundation loss 可以用它做监督。
                 decoder_inputs["image_output_labels"] = output_image_features
             elif self.training and _has_trainable_parameters(self.image_encoder):
                 dummy_embeds: torch.Tensor = self.image_encoder.lm_dummy_encode()
@@ -217,9 +190,6 @@ class SeedOmniEncoderModel(SeedOmniPreTrainedModel):
         return inputs_embeds
 
     def video_forward(self, inputs_embeds: torch.Tensor, decoder_inputs, **kwargs):
-        # 处理“输入视频”：
-        # 整体逻辑与图像一致，只是优先使用独立的视频 encoder；
-        # 如果没有配置 video_encoder，则回退到 image_encoder 来编码视频帧。
         if self.encode_input:
             input_video_inputs = extract_model_inputs("video_input_", kwargs)
             input_video_mask: torch.Tensor = input_video_inputs.pop("mask", None)
@@ -240,7 +210,6 @@ class SeedOmniEncoderModel(SeedOmniPreTrainedModel):
                 video_mask = input_video_mask.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
                 inputs_embeds = inputs_embeds.masked_scatter(video_mask, input_video_features)
             elif self.training:
-                # dummy 分支与图像相同，保证训练图完整
                 if getattr(self, "video_encoder", None) is not None:
                     if _has_trainable_parameters(self.video_encoder):
                         dummy_embeds: torch.Tensor = self.video_encoder.lm_dummy_encode()
@@ -249,25 +218,16 @@ class SeedOmniEncoderModel(SeedOmniPreTrainedModel):
                     dummy_embeds: torch.Tensor = self.image_encoder.lm_dummy_encode()
                     inputs_embeds += dummy_embeds.mean() * 0.0
 
-        # 当前只实现了“视频作为输入编码到语言模型序列里”的路径，
-        # 还没有实现“视频作为输出目标”的生成/监督编码逻辑。
         return inputs_embeds
 
     def audio_forward(self, inputs_embeds: torch.Tensor, decoder_inputs, **kwargs):
-        # 处理“输入音频”：
-        # Whisper 等音频 encoder 会把一段连续音频编码成若干 audio token embedding，
-        # 再通过 audio_input_mask 写回到语言模型序列中。
         if self.encode_input:
             input_audio_inputs = extract_model_inputs("audio_input_", kwargs)
             input_audio_mask: torch.Tensor = input_audio_inputs.pop("mask", None)
             if input_audio_inputs and input_audio_mask.sum() > 0:
-                # 这里的 input_audio_inputs 一般包含：
-                #   features: mel / 频谱特征
-                #   feature_lengths: 每段音频对应的有效长度
                 input_audio_features: torch.Tensor = self.audio_encoder.lm_encode(**input_audio_inputs).to(
                     inputs_embeds
                 )
-                # 与图像/视频相同，SP 模式下需要把 encoder 输出搬到当前分片布局
                 if get_runtime_state().sp_enabled:
                     input_audio_features = identity_layout(
                         input_audio_features, seq_dim=0, head_dim=1, group=get_runtime_state().sp_group
@@ -279,26 +239,17 @@ class SeedOmniEncoderModel(SeedOmniPreTrainedModel):
                 dummy_embeds: torch.Tensor = self.audio_encoder.lm_dummy_encode()
                 inputs_embeds += dummy_embeds.mean() * 0.0
 
-        # 当前同样只支持“音频作为输入”的编码路径，还没有实现音频输出生成。
         return inputs_embeds
 
     def forward(self, input_ids: torch.Tensor, **kwargs: torch.Tensor) -> Dict[str, torch.Tensor]:
-        # 先把文本 token id 映射成基础的文本 embedding。
-        # 注意：多模态 placeholder 在进入这里前已经被替换成 0，
-        # 真正的图像/视频/音频 embedding 会在后面的各模态 forward 中覆盖回来。
         inputs_embeds: torch.Tensor = self.text_encoder(input_ids)
-        # decoder_inputs 用于暂存“输出模态”相关的监督信息，
-        # 例如 image_output_labels，后续 decoder/foundation loss 会用到。
         decoder_inputs = {}
 
         if get_runtime_state().sp_enabled:
-            # 文本 embedding 先切换到 SP 的 head-sharded 布局，
-            # 这样后续写入的多模态 embedding 也在同一布局下处理。
             inputs_embeds = identity_layout(
                 inputs_embeds, seq_dim=1, head_dim=2, group=get_runtime_state().sp_group
             )
 
-        # 按模态顺序，把各 encoder 的输出逐步写回同一个 inputs_embeds。
         if "image" in self.modality:
             inputs_embeds = self.image_forward(inputs_embeds, decoder_inputs, **kwargs)
 
@@ -309,13 +260,9 @@ class SeedOmniEncoderModel(SeedOmniPreTrainedModel):
             inputs_embeds = self.audio_forward(inputs_embeds, decoder_inputs, **kwargs)
 
         if get_runtime_state().sp_enabled:
-            # 在进入 foundation 前，把 embedding 再还原回标准的 sequence-major 布局。
             inputs_embeds = identity_layout(
                 inputs_embeds, head_dim=2, seq_dim=1, group=get_runtime_state().sp_group
             )
-        # 返回给上层 SeedOmniModel：
-        #   inputs_embeds: 已经融合文本 + 多模态后的 foundation 输入
-        #   decoder_inputs: 后续 decoder/loss 所需的附加监督信息
         return {"inputs_embeds": inputs_embeds, "decoder_inputs": decoder_inputs}
 
 
@@ -332,7 +279,7 @@ class SeedOmniDecoderModel(SeedOmniPreTrainedModel):
             self.image_decoder: BaseDecoderModelMixin = model_cls._from_config(
                 config.image_config, attn_implementation=config._attn_implementation, torch_dtype=torch_dtype
             )
-            self.modality.append("image")  # TODO: config keys for sp_slice
+            self.modality.append("image")
         if config.video_config.model_type:
             model_cls = get_model_class(config.video_config)
             self.video_decoder: BaseDecoderModelMixin = model_cls._from_config(
@@ -425,7 +372,7 @@ class SeedOmniDecoderModel(SeedOmniPreTrainedModel):
                 sp_size = get_runtime_state().sp_size
                 sp_rank = get_runtime_state().sp_rank
                 sp_chunk_size = output_image_mask.size(-1) // sp_size
-                sp_slice_dim = 1  # bs, seq, ...
+                sp_slice_dim = 1
 
                 output_image_mask = F.pad(output_image_mask[..., 1:], (0, 1), value=0)
 
@@ -439,7 +386,7 @@ class SeedOmniDecoderModel(SeedOmniPreTrainedModel):
                 gathered_image_output_labels = torch.cat(gathered_image_output_labels, dim=0)
                 gathered_image_output_labels = gathered_image_output_labels[: output_image_mask.sum()]
 
-                if len(labels_shape) == 3:  # bs, seq, dim
+                if len(labels_shape) == 3:
                     output_image_mask = output_image_mask.unsqueeze(-1).expand_as(labels)
                 labels[~output_image_mask] = IGNORE_INDEX
                 labels = labels.masked_scatter(output_image_mask, gathered_image_output_labels)
@@ -581,12 +528,6 @@ class SeedOmniModel(SeedOmniPreTrainedModel, GenerationMixin):
         return self.foundation.position_id_func
 
     def _get_foundation_forward_keys(self) -> set[str]:
-        # SeedOmni 的上游会把“encoder 私有字段”、“chat template 辅助字段”、“foundation 真正输入”
-        # 全部放进同一个 inputs 字典里。这里显式收口，只保留 foundation forward 真正会消费的键。
-        #
-        # 设计目标：
-        # 1. 避免 image_input_* / video_input_* / audio_input_* 这类字段在完成 encoder 阶段职责后继续漏进 foundation
-        # 2. 同时保留 foundation wrapper 额外声明支持的键（例如 FA 相关 kwargs）
         forward_keys = {
             key
             for key in inspect.signature(self.foundation.forward).parameters.keys()
@@ -596,17 +537,12 @@ class SeedOmniModel(SeedOmniPreTrainedModel, GenerationMixin):
         return forward_keys
 
     def _build_foundation_inputs(self, inputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        # 根据 foundation 的合法输入白名单，构造真正要传给 foundation 的参数字典。
-        # 注意：decoder/loss 仍然会继续使用原始 inputs，因此这里只做“下传前过滤”，不修改原字典。
         foundation_forward_keys = self._get_foundation_forward_keys()
         foundation_inputs = {key: value for key, value in inputs.items() if key in foundation_forward_keys}
         position_ids = foundation_inputs.get("position_ids")
         if isinstance(position_ids, torch.Tensor) and torch.is_floating_point(position_ids):
             foundation_inputs["position_ids"] = position_ids.float()
 
-        # SeedOmni 的训练路径依赖 hidden_states 做后续 decoder loss，因此这里强制开启：
-        # - return_dict: 便于稳定地从具名字段读取输出
-        # - output_hidden_states: decoder 需要最后一层 hidden_states
         foundation_inputs["return_dict"] = True
         foundation_inputs["output_hidden_states"] = True
         return foundation_inputs
@@ -642,8 +578,6 @@ class SeedOmniModel(SeedOmniPreTrainedModel, GenerationMixin):
             return self.foundation(**foundation_inputs)
 
     def get_preserve_fp32_forward_input_keys(self) -> tuple[str, ...]:
-        # Keep root FSDP input casting enabled. `position_ids` is restored to fp32
-        # in `_build_foundation_inputs()` immediately before calling foundation.
         return ()
 
     def _cast_forward_inputs_for_mixed_precision(self, inputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -673,9 +607,6 @@ class SeedOmniModel(SeedOmniPreTrainedModel, GenerationMixin):
             inputs["inputs_embeds"] = decoder_encodes["inputs_embeds"]
             decoder_inputs = decoder_encodes["decoder_inputs"]
 
-        # 到这里为止：
-        # - inputs 里仍然保留完整的 SeedOmni 上下文，供 decoder/loss 使用
-        # - 但 foundation 只应该接收它真正理解的字段
         foundation_inputs = self._build_foundation_inputs(inputs)
         outputs = self._foundation_forward(foundation_inputs)
 
@@ -722,7 +653,6 @@ class SeedOmniModel(SeedOmniPreTrainedModel, GenerationMixin):
         self.image_parallel_size = image_parallel_size
         self.image_classifier_free_guidance = image_classifier_free_guidance
         self.image_generation_config = image_generation_config
-        # TODO: swift gen config based on text token (text token in image position should be trained)
         self.image_end_token = image_end_token
         return kwargs
 
@@ -743,9 +673,8 @@ class SeedOmniModel(SeedOmniPreTrainedModel, GenerationMixin):
         self.tmp_image = []
         self.generated_images_sequence = []
         if hasattr(self.foundation, "get_generation_position_id"):
-            # TODO: if customized rope for image generation
             self.generation_position_id_map = None
-        else:  # 1d rope
+        else:
             self.generation_position_id_map = None
 
         kwargs["input_ids"] = kwargs["input_ids"].repeat(self.image_parallel_size, 1)
@@ -777,7 +706,7 @@ class SeedOmniModel(SeedOmniPreTrainedModel, GenerationMixin):
         attention_mask: Optional[torch.Tensor] = None,
         cache_position: Optional[torch.Tensor] = None,
         **kwargs,
-    ):  # only support bs=1 inference
+    ):
         foundation_args = set(inspect.signature(self.foundation.prepare_inputs_for_generation).parameters)
         encoder_decoder_inputs = {}
 
@@ -794,7 +723,7 @@ class SeedOmniModel(SeedOmniPreTrainedModel, GenerationMixin):
             cache_position=cache_position,
             **kwargs,
         )
-        if cache_position[0] == 0:  # first time inference
+        if cache_position[0] == 0:
             encoder_encodes = self.encoder(input_ids=input_ids, **encoder_decoder_inputs)
             model_inputs["inputs_embeds"] = encoder_encodes["inputs_embeds"]
             return model_inputs
@@ -803,16 +732,15 @@ class SeedOmniModel(SeedOmniPreTrainedModel, GenerationMixin):
         if self.gen_type == "text":
             if input_ids[0][-1] == self.image_start_token:
                 self.setup_image_generation()
-            # TODO: other modality control
         elif self.gen_type == "image":
-            hidden_states = encoder_decoder_inputs["hidden_states"][-1]  # bs, cache_len, dim
+            hidden_states = encoder_decoder_inputs["hidden_states"][-1]
             input_embeds, next_tokens = self.decoder.lm_embed(
                 hidden_states[:, -1:], model_type="image", **self.image_generation_config
             )
             self.tmp_image.append(next_tokens)
             generated_tokens = len(self.tmp_image)
             model_inputs["inputs_embeds"] = input_embeds
-            if self.generation_position_id_map is not None:  # TODO: customized rope for image generation
+            if self.generation_position_id_map is not None:
                 position_ids = self.generation_position_id_map[..., generated_tokens : generated_tokens + 1]
                 model_inputs["position_ids"] = position_ids + cache_position[0] - generated_tokens
             if generated_tokens == self.image_token_num:
@@ -824,7 +752,7 @@ class SeedOmniModel(SeedOmniPreTrainedModel, GenerationMixin):
             raise NotImplementedError
         return model_inputs
 
-    def generate_multimodal(self, hidden_states, modal_type="image"):  # TODO: other modal_type
+    def generate_multimodal(self, hidden_states, modal_type="image"):
         return self.decoder.generate(hidden_states, modal_type=modal_type, **self.image_generation_config)
 
     def _validate_model_kwargs(self, model_kwargs):

@@ -27,7 +27,6 @@ from .modeling_seed_omni import SeedOmniModel
 from .processing_seed_omni import SeedOmniProcessor
 
 
-# `no_init_weights` was moved to `transformers.initialization` in:
 # https://github.com/huggingface/transformers/pull/42957
 if is_transformers_version_greater_or_equal_to("5.0.0"):
     from transformers.initialization import no_init_weights
@@ -217,7 +216,7 @@ def build_omni_model(
 
     foundation_config = foundation_config.to_dict()
     text_encoder_config = foundation_config.get("text_config", foundation_config)
-    encoder_config = {"text_config": text_encoder_config}  # TODO: only keep nessesary keys
+    encoder_config = {"text_config": text_encoder_config}
     for encoder_type, encoder_args in encoders.items():
         extra_args = {key: value for key, value in encoder_args.items() if key not in ["config_path", "model_path"]}
         encoder_config[f"{encoder_type}_config"] = build_config(
@@ -257,7 +256,7 @@ def build_omni_model(
         "torch_dtype": getattr(torch, torch_dtype),
         "attn_implementation": attn_implementation,
     }
-    if weights_path is None:  # init empty model
+    if weights_path is None:
         with torch.device(init_device):
             model = SeedOmniModel._from_config(**init_kwargs)
     else:
@@ -292,7 +291,6 @@ def build_omni_model(
                     init_device,
                 )
 
-    # tie embeddings
     model.get_input_embeddings()._parameters["weight"] = model.foundation.get_input_embeddings()._parameters["weight"]
     if getattr(model.foundation.config, "tie_word_embeddings", True):
         input_embeddings = model.get_input_embeddings()

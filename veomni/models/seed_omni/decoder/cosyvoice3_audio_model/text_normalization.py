@@ -18,16 +18,13 @@ class CosyVoiceTextNormalizer:
     @classmethod
     def clean_for_speech(cls, text: str) -> str:
         """Convert common LLM Markdown/control output into natural spoken text."""
-        # Some streamed or escaped outputs contain literal backslashes before tags.
         text = text.replace("\\<", "<").replace("\\>", ">")
         text = cls._think_block_pattern.sub(" ", text)
         text = cls._unclosed_think_pattern.sub(" ", text)
 
-        # Markdown emphasis and escaping do not carry a pronunciation.
         text = re.sub(r"\\([`*_#\\])", r"\1", text)
         text = text.replace("**", "").replace("__", "").replace("`", "")
 
-        # Headings and list markers are visual structure, not words to synthesize.
         text = cls._heading_pattern.sub("。", text)
         text = cls._list_marker_pattern.sub("，", text)
         text = re.sub(r"(?<=[\u3400-\u9fff。！？])\s*[-+*]\s*(?=[\u3400-\u9fff])", "，", text)
@@ -79,7 +76,6 @@ class CosyVoiceTextNormalizer:
         if not text:
             raise ValueError("Speech source text is empty; cannot build a normalized CosyVoice query.")
 
-        # Match CosyVoice's behavior for strings containing its control tokens.
         if "<|" not in text or "|>" not in text:
             if self.contains_chinese(text):
                 if self.zh_tn_model is not None:

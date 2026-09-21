@@ -11,7 +11,6 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
-# limitations under the License.
 from ....loader import MODEL_CONFIG_REGISTRY, MODELING_REGISTRY
 
 
@@ -21,8 +20,6 @@ def register_qwen3_5_foundation_config():
 
     from .configuration_qwen3_5_foundation import Qwen35FoundationConfig
 
-    # HF Qwen3.x continues to reuse the Qwen2 tokenizer classes.
-    # Multimodal processor registration still needs to be added separately.
     AutoTokenizer.register(Qwen35FoundationConfig, fast_tokenizer_class=Qwen2TokenizerFast)
     return Qwen35FoundationConfig
 

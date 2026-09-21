@@ -17,7 +17,7 @@ import os
 
 
 try:
-    from hdfs_io import exists  # for internal use only
+    from hdfs_io import exists
 except ImportError:
     from ...utils.hdfs_io import exists
 from transformers import BatchFeature, ProcessorMixin
@@ -97,7 +97,7 @@ class SeedOmniProcessor(ProcessorMixin):
             for key, value in image_inputs.items():
                 inputs[f"image_output_{key}"] = value
 
-            if getattr(self, "target_image_processor", None) is not None:  # target for diffusion models
+            if getattr(self, "target_image_processor", None) is not None:
                 image_inputs: BatchFeature = self.target_image_processor.process(images=output_images, **kwargs)
                 for key, value in image_inputs.items():
                     inputs[f"image_target_{key}"] = value
@@ -135,7 +135,6 @@ class SeedOmniProcessor(ProcessorMixin):
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, **kwargs):
         processor = super().from_pretrained(pretrained_model_name_or_path, **kwargs)
-        # if return_unused_kwargs a tuple is returned where the second element is "unused_kwargs"
         if isinstance(processor, tuple):
             processor = processor[0]
 

@@ -40,15 +40,10 @@ def parse_position_id_kwargs(input_ids: torch.Tensor, attention_mask: torch.Tens
     if "video" in grid_thw:
         return_dict["video_grid_thw"] = grid_thw["video"]
     if "video_second_per_grid" in kwargs:
-        # `video_second_per_grid` 描述每个视频 grid 在时间轴上跨越多少秒，
-        # 是 Qwen-Omni token-level interleave 里构造视频时间索引所需的关键量。
         return_dict["second_per_grids"] = kwargs["video_second_per_grid"].to(input_ids.device)
     elif "video" in grid_thw:
-        # 如果上游没显式传入，就退化为 1.0 秒/视频 grid。
         return_dict["second_per_grids"] = torch.tensor([1.0] * len(grid_thw["video"])).to(input_ids.device)
     if "num_tokens" in kwargs and "audio" in kwargs["num_tokens"]:
-        # audio_token_counts 表示“每个原始音频样本在模板中一共展开成了多少个 audio_pad token”。
-        # 对于带音频的视频，这个计数是整条音轨的总 token 数，而不是某个音频块的局部长度。
         return_dict["audio_token_counts"] = kwargs["num_tokens"]["audio"]
     if "audio_start_token_id" in kwargs:
         return_dict["audio_start_token_id"] = kwargs["audio_start_token_id"]
@@ -77,9 +72,6 @@ def _get_llm_pos_ids_for_vision(
     grid_hs: torch.Tensor,
     grid_ws: torch.Tensor,
 ) -> torch.Tensor:
-    # 这里等价复刻 Qwen-Omni 系列内部的 `get_llm_pos_ids_for_vision()`：
-    # 根据视觉 token 所在的时间索引 t_index，以及当前样本的 H/W 网格大小，
-    # 构造 [3, num_vision_tokens] 形式的 (t, h, w) 位置编码。
     device = t_index.device
     llm_grid_h = int((grid_hs[vision_idx] // spatial_merge_size).item())
     llm_grid_w = int((grid_ws[vision_idx] // spatial_merge_size).item())
@@ -105,10 +97,6 @@ def _build_qwen3_5_omni_interleaved_multimodal_position_ids(
     audio_position_scale: float = 0.5,
     spatial_merge_size: int = 2,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    # 真正参照 Qwen-Omni 的 token-level interleave 逻辑：
-    # - `<vision_start><audio_start> ... <audio_end><vision_end>` 表示“带音频的视频段”
-    # - 视频 token 和音频 token 都先映射到统一时间轴
-    # - 然后按时间先后逐 token 归并位置编码，而不是按块拼接
     attention_mask = attention_mask == 1
     position_ids = torch.zeros(3, input_ids.shape[0], input_ids.shape[1], dtype=torch.float, device=input_ids.device)
 
@@ -187,7 +175,6 @@ def _build_qwen3_5_omni_interleaved_multimodal_position_ids(
             llm_pos_ids_list.append(torch.arange(bos_len, device=input_ids.device).view(1, -1).expand(3, -1) + st_idx)
             st_idx += bos_len
 
-            # 纯音频：`audio_start` 不在 `vision_start` 后面，说明这是一段独立音频输入。
             if min_ed == ed_audio_start:
                 audio_len = int(audio_token_counts[audio_idx].item())
                 if audio_len > 0:
@@ -199,7 +186,6 @@ def _build_qwen3_5_omni_interleaved_multimodal_position_ids(
                 audio_idx += 1
                 remain_audios -= 1
 
-            # 纯图像：仍然沿用 Omni 系列的 vision 位置构造方式。
             elif min_ed == ed_vision_start and int(valid_input_ids[ed_vision_start + 1].item()) == image_token_id:
                 grid_t = int(image_grid_thw[image_idx][0].item())
                 t_index = (torch.arange(grid_t, device=input_ids.device) * 1 * position_id_per_seconds).float()
@@ -217,12 +203,10 @@ def _build_qwen3_5_omni_interleaved_multimodal_position_ids(
                 image_idx += 1
                 remain_images -= 1
 
-            # 视频分支：这里同时覆盖“纯视频”和“视频+音频”两种情况。
             elif min_ed == ed_vision_start:
                 next_token_id = int(valid_input_ids[ed_vision_start + 1].item())
 
                 if next_token_id == video_token_id:
-                    # 对齐 audio_idx：如果当前视频在 audio_token_counts 中对应的是一个 0 长度占位，就消费掉它。
                     if audio_idx < audio_token_counts.numel() and int(audio_token_counts[audio_idx].item()) == 0:
                         audio_idx += 1
                     grid_t = int(video_grid_thw[video_idx][0].item())
@@ -243,9 +227,6 @@ def _build_qwen3_5_omni_interleaved_multimodal_position_ids(
                     video_idx += 1
                     remain_videos -= 1
                 else:
-                    # 真正的 Qwen-Omni token-level interleave：
-                    # `<vision_start><audio_start>` 后面的 video/audio pad 已经在模板里逐 token 交织，
-                    # 这里对它们再按统一时间轴生成对应的 position_ids。
                     audio_len = int(audio_token_counts[audio_idx].item())
                     audio_time_index = torch.arange(audio_len, device=input_ids.device).float() * audio_position_scale
                     audio_llm_pos_ids = (
@@ -319,8 +300,6 @@ def build_qwen3_5_position_ids(
     text_position_ids = attention_mask.long().cumsum(-1) - 1
     text_position_ids = text_position_ids.masked_fill(attention_mask == 0, 0)
 
-    # 如果样本中没有出现 `<audio_start>`，说明当前仍是纯图像/纯视频/纯文本场景，
-    # 则继续完全复用 Qwen3.5 原生的 image/video mRoPE 逻辑。
     use_qwen_omni_interleave = (
         audio_start_token_id is not None
         and audio_token_counts is not None
@@ -385,8 +364,6 @@ def build_qwen3_5_position_ids(
 class Qwen35FoundationModel(BaseFoundationModelMixin, Qwen3_5ForConditionalGeneration):
     config_class = Qwen35FoundationConfig
     _no_split_modules = ["Qwen3_5TextDecoderLayer", "Qwen3_5VisionBlock"]
-    # 这些键不是 HF Qwen3.5 原始 forward 形参，但在当前 VeOmni patch 中会通过 **kwargs 继续向下传递，
-    # 因此需要明确声明它们是允许透传给底层 attention/kernel 的“额外合法字段”。
     forward_extra_keys = (
         "cu_seq_lens_q",
         "cu_seq_lens_k",
@@ -406,8 +383,6 @@ class Qwen35FoundationModel(BaseFoundationModelMixin, Qwen3_5ForConditionalGener
         self.lm_head = nn.Linear(config.text_config.hidden_size, config.text_config.vocab_size, bias=False)
         self.vocab_size = config.text_config.vocab_size
 
-        # SeedOmni replaces multimodal placeholder tokens before the foundation forward.
-        # The RoPE precompute path still needs the placeholder ids to match the chat template output.
         self.config.image_token_id = IMAGE_INPUT_INDEX
         self.config.video_token_id = VIDEO_INPUT_INDEX
         self.model.config.image_token_id = IMAGE_INPUT_INDEX
@@ -431,13 +406,6 @@ class Qwen35FoundationModel(BaseFoundationModelMixin, Qwen3_5ForConditionalGener
         ]
 
     def _filter_forward_kwargs(self, kwargs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        # 二次白名单过滤：
-        # SeedOmni 上游已经会尽量只传 foundation 合法字段，但这里仍然再收一次口，
-        # 防止未来有新的 image_input_* / video_input_* / audio_input_* 私有字段误传进来。
-        #
-        # 允许保留两类键：
-        # 1. HF Qwen3.5 原始 forward 就认识的字段（例如 pixel_values / image_grid_thw）
-        # 2. VeOmni patch 额外需要继续透传给底层注意力实现的字段（例如 cu_seq_lens_q）
         hf_forward_keys = {
             key
             for key in inspect.signature(Qwen3_5ForConditionalGeneration.forward).parameters.keys()
@@ -518,8 +486,6 @@ class Qwen35FoundationModel(BaseFoundationModelMixin, Qwen3_5ForConditionalGener
         ):
             position_ids = position_ids.transpose(0, 1).contiguous()
 
-        # 这里只保留 foundation 真正会理解或向下游 kernel 继续透传的键。
-        # 这样可以明确切断 SeedOmni encoder 私有字段与 foundation 的边界。
         foundation_kwargs = self._filter_forward_kwargs(kwargs)
         raw_multimodal_inputs_present = any(
             foundation_kwargs.get(key) is not None

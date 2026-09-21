@@ -14,8 +14,6 @@ def _init_config(config_dict: Optional[Dict[str, Any]]) -> Optional["PretrainedC
         return PretrainedConfig()
 
     config_dict = deepcopy(config_dict)
-    # Older exports stored this HF field as a scalar. Newer transformers
-    # validates it as list[str] through huggingface_hub dataclasses.
     if isinstance(config_dict.get("architectures"), str):
         config_dict["architectures"] = [config_dict["architectures"]]
     model_type = config_dict.pop("model_type")

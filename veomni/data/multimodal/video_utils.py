@@ -72,10 +72,8 @@ def calculate_frame_indices(
     Returns:
         (indices, pad_count): Frame indices to sample and padding count
     """
-    # Calculate target frame count
     nframes = total_frames / video_fps * fps
     
-    # Apply min/max limits
     if min_frames is not None:
         if frame_factor is not None:
             min_frames = math.ceil(min_frames / frame_factor) * frame_factor
@@ -86,14 +84,12 @@ def calculate_frame_indices(
             max_frames = math.floor(max_frames / frame_factor) * frame_factor
         nframes = min(max_frames, nframes)
 
-    # Align to frame_factor
     if frame_factor is not None:
         nframes = math.floor(nframes / frame_factor) * frame_factor
         nframes = max(nframes, frame_factor)
 
     nframes = int(max(1, nframes))
 
-    # Calculate padding
     pad_count = 0
     if nframes > total_frames:
         pad_count = nframes - total_frames
@@ -101,7 +97,6 @@ def calculate_frame_indices(
     else:
         sample_count = nframes
 
-    # Uniform sampling
     if sample_count > 0:
         indices = np.linspace(0, total_frames - 1, sample_count).round().astype(int).tolist()
     else:
@@ -135,7 +130,6 @@ def smart_video_nframes(
     """
     total_frames = video.shape[0]
 
-    # Support explicit frame count override
     if "frames" in kwargs:
         target_frames = kwargs["frames"]
         indices, pad_count = calculate_frame_indices(
@@ -158,7 +152,6 @@ def smart_video_nframes(
 
     video = video[indices]
 
-    # Pad with last frame if needed
     if pad_count > 0: 
         last_frame = video[-1:].expand(pad_count, -1, -1, -1)
         video = torch.cat([video, last_frame], dim=0)
@@ -348,7 +341,6 @@ def _load_and_process_video_with_codec(video_input: VideoInput, use_audio_in_vid
         frames_indices = torch.arange(video.shape[0])
         return video, audio, audio_fps, frames_indices
 
-    # video_input is str (path/URL) or bytes
     try:
         decoder = VideoDecoder(video_input, device="cpu", num_ffmpeg_threads=0)
     except Exception as e:
@@ -366,7 +358,6 @@ def _load_and_process_video_with_codec(video_input: VideoInput, use_audio_in_vid
     video_fps = metadata.average_fps
     total_frames = metadata.num_frames
 
-    # Safety margin for inaccurate frame counts
     effective_total_frames = max(1, total_frames - 1)
 
     indices, pad_count = calculate_frame_indices(total_frames=effective_total_frames, video_fps=video_fps, **kwargs)
@@ -396,9 +387,8 @@ def _load_and_process_video_with_codec(video_input: VideoInput, use_audio_in_vid
         final_frames = resized_frames
         padded_indices = sampled_indices
 
-    # Extract audio with PyAV
     audio, audio_fps = None, None
-    if use_audio_in_video: # 带音频的视频处理
+    if use_audio_in_video:
         max_audio_duration = (metadata.duration_seconds or 60.0) + 1.0
         audio, audio_fps = extract_audio_from_video(video_input, max_duration_seconds=max_audio_duration)
 
@@ -484,7 +474,6 @@ def fetch_videos_metadata(videos: List[VideoInput], **kwargs):
     return video_inputs, video_metadata_list, audio_inputs, audio_metadata_list
 
 
-# Backward compatibility with torchvision-based API
 def load_video_from_path(video_path: str, use_audio_in_video: bool = True, **kwargs):
     """Load video from file path (compatibility wrapper).
 
