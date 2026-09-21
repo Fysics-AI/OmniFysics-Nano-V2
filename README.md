@@ -5,10 +5,10 @@
 </p>
 
 <p align="center">
-  <a href="#paper">📄 Paper</a> •
-  <a href="https://github.com/Fysics-AI/OmniFysics-Nano-V2.git">🌐 Project Page</a> •
-  <a href="https://huggingface.co/Fysics-AI/OmniFysics-Nano-V2">🤗 Model</a> •
-  <a href="#citation">📚 Citation</a>
+  📄 <a href="#paper">Paper</a> •
+  🌐 <a href="https://github.com/Fysics-AI/OmniFysics-Nano-V2.git">Project Page</a> •
+  🤗 <a href="https://huggingface.co/Fysics-AI/OmniFysics-Nano-V2">Model</a> •
+  📚 <a href="#citation">Citation</a>
 </p>
 
 We present **OmniFysics‑Nano‑V2**, a compact 4B omni‑modal model that supports holistic understanding of images, videos, audios, speeches, and texts with speech output capability. We design a dual‑branch physical supervision pipeline that complements static physical attribute grounding and dynamic physical event modeling. We develop a reward‑diversity filtering for policy‑aware RL data curation, and a two‑stage GRPO strategy that optimizes general task performance and enhances fine‑grained physical reasoning via intermediate perception supervision. The proposed model achieves leading result on **17 of 21 Benchmarks** against SOTA omni‑modal models.
