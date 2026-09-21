@@ -1,4 +1,4 @@
-# OmniFysics-Nano-V2
+# OmniFysics-Nano-V2: Understanding the Physical World Across Modalities
 
 <p align="center">
   <img src="assets/figs/OmniFysics-Nano-V2.png" alt="OmniFysics-Nano-V2" width="100%">
@@ -11,7 +11,7 @@
   <a href="#citation">📚 Citation</a>
 </p>
 
-We present **OmniFysics‑Nano‑V2**, a compact 4B omni‑modal model that supports holistic understanding of images, videos, audios, speeches, and texts with speech output capability. We design a dual‑branch physical supervision pipeline that complements static physical attribute grounding and dynamic physical event modeling. We develop a reward‑diversity filtering for policy‑aware RL data curation, and a two‑stage GRPO strategy that optimizes general task performance and enhances fine‑grained physical reasoning via intermediate perception supervision. The proposed model achieves leading result on 17 of 21 benchmarks against SOTA omni‑modal models, with ablations showing substantial improvements over SFT and large reductions in RL data and compute.
+We present **OmniFysics‑Nano‑V2**, a compact 4B omni‑modal model that supports holistic understanding of images, videos, audios, speeches, and texts with speech output capability. We design a dual‑branch physical supervision pipeline that complements static physical attribute grounding and dynamic physical event modeling. We develop a reward‑diversity filtering for policy‑aware RL data curation, and a two‑stage GRPO strategy that optimizes general task performance and enhances fine‑grained physical reasoning via intermediate perception supervision. The proposed model achieves leading result on **17 of 21 Benchmarks** against SOTA omni‑modal models.
 
 ## 1.Architecture of OmniFysics-Nano-V2
 We propose the OmniFysics-Nano-V2, a compact 4B omni-modal model for physical-world perception and understanding. The model supports the understanding of image, video, audio, speech, and text inputs, alongside text and audio generation capabilities.
@@ -51,7 +51,7 @@ huggingface-cli download FunAudioLLM/Fun-CosyVoice3-0.5B-2512 --local-dir CosyVo
 
 The final directory layout is:
 
-```text
+```bash
 OmniFysics-Nano-V2/
 ├── hf_ckpt/                  # OmniFysics-Nano-V2 checkpoint
 ├── CosyVoice3-0_5B/          # CosyVoice3 checkpoint
@@ -62,14 +62,14 @@ OmniFysics-Nano-V2/
 
 ## 3.Environment Setup
 
-Option 1: create the environment from the provided Conda environment yaml file.
+**Option 1**: create the environment from the provided Conda environment yaml file.
 
 ```bash
 conda env create -f environment.yml
 conda activate OmniFysics-Nano-V2
 ```
 
-Option 2: follow the step-by-step setup in [environment.md](environment.md).
+**Option 2**: follow the step-by-step setup in [environment.md](environment.md).
 
 ## 4.Inference: Multimodal Input & Text Output
 
@@ -99,36 +99,44 @@ python scripts/Inference_Multimodal.py --model-path hf_ckpt \
 ```
 
 ## 6.Performance
-We evaluated OmniFysics-Nano-V2 on 21 benchmarks that cover general multimodal, audio, omni-modal / video, physical understanding, mathematical reasoning and physical reasoning benchmarks.
-The OmniFysics-Nano-V2 achieves SOTA performance on 17 benchmarks with 4B model size, even against 7B-scale baseline models.
-Notably, the OmniFysics-Nano-V2 achieves 98.27% on FysicsEval Understanding and 59.42% on PhysUniBench, surpassing the state-of-the-art baselines by 5.57% and 11.42%, respectively.
+We evaluated OmniFysics-Nano-V2 on **21 Benchmarks** that cover general multimodal, audio, omni-modal / video, physical understanding, mathematical reasoning and physical reasoning benchmarks.
+The OmniFysics-Nano-V2 achieves SOTA performance on **17 Benchmarks** with 4B model size, even against 7B-scale baseline models.
+Notably, the OmniFysics-Nano-V2 achieves 98.27% on FysicsEval-Understanding and 59.42% on PhysUniBench, surpassing the SOTA baselines by 5.57% and 11.42%, respectively.
 
 
-Performance on general multimodal, audio, omni-modal, and video benchmarks.
+- **Comprehensive Physics Benchmarks**
 <p align="center">
-  <img src="assets/figs/Performance-1.png" alt="OmniFysics-Nano-V2 Performance" width="75%">
+  <img src="assets/figs/1-Comprehensive-Physics-Benchmarks.png" alt="Performance on comprehensive physics benchmarks" width="75%">
 </p>
 
-
-Performance on physical understanding, mathematical reasoning and physical reasoning benchmarks.
+- **Omni-Modal and Video Benchmarks**
 <p align="center">
-  <img src="assets/figs/Performance-2.png" alt="OmniFysics-Nano-V2 Performance" width="75%">
+  <img src="assets/figs/2-Omni-Modal-and-Video-Benchmarks.png" alt="Performance on omni-modal and video benchmarks" width="75%">
+</p>
+
+- **Visual Multimodal Understanding Benchmarks**
+<p align="center">
+  <img src="assets/figs/3-Visual-Multimodal-Understanding-Benchmarks.png" alt="Performance on visual multimodal understanding benchmarks" width="75%">
+</p>
+
+- **Audio Understanding Benchmarks**
+
+<p align="center">
+  <img src="assets/figs/4-Audio-Understanding-Benchmarks.png" alt="Performance on audio understanding benchmarks" width="75%">
 </p>
 
 ## Acknowledgments
 
-This work is built upon the following open‑source repositories:
-- **[Framework‑A](https://github.com/xxx/framework‑a)**: for the foundational model backbone implementation.
-- **[Framework‑B](https://github.com/xxx/framework‑b)**: for training and inference utilities.
-
-We sincerely thank the authors and contributors for releasing their code.
-
+This work is built upon the following open‑source repositories. We sincerely thank the authors and contributors for releasing their code.
+- **[VeOmni](https://github.com/ByteDance-Seed/VeOmni)**: for the foundational model backbone implementation.
+- **[CosyVoice3](https://github.com/QwenAudio/CosyVoice)**: for speech generation.
+- **[ms-swift](https://github.com/modelscope/ms-swift)**: for reinforcement learning training.
 
 ## Citation
 
 ```bibtex
 @article{liu2026omnifysics-nano-v2,
-  title   = {XXXX},
+  title   = {OmniFysics-Nano-V2: Understanding the Physical World Across Modalities},
   author  = {Yizhou Liu, Jinghang Han, Kaixiang Qiu, Qi He, Shunli Wang, Lihua Zhang, Dingkang Yang},
   journal = {arXiv preprint},
   year    = {2026}
@@ -138,4 +146,3 @@ We sincerely thank the authors and contributors for releasing their code.
 ## License
 
 The content of this repository is released under the Apache License 2.0 with an additional **non-commercial** restriction: it may be used, reproduced, and distributed for research and educational purposes only. Any commercial use is prohibited without prior written permission from the maintainers. Source videos remain subject to the licenses of their original datasets.
-
