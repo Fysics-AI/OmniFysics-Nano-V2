@@ -3,7 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 hf_ckpt/
+hf_ckpt
 CosyVoice3-0_5B/
+CosyVoice3-0_5B
 
 # C extensions
 *.so
