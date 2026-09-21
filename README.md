@@ -19,7 +19,7 @@ We propose the OmniFysics-Nano-V2, a compact 4B omni-modal model for physical-wo
   <img src="assets/figs/OmniFysics-Nano-Arch.png" alt="OmniFysics-Nano-V2" width="80%">
 </p>
 
-To address the problem of Ambiguous Physical Supervision, we construct a physics-aware data pipeline with complementary Static and Dynamic branches.
+To address the problem of Absent Physical Supervision, we construct a physics-aware data pipeline with complementary Static and Dynamic branches.
 <p align="center">
   <img src="assets/figs/Data-Pipeline.png" alt="OmniFysics-Nano-V2" width="80%">
 </p>
