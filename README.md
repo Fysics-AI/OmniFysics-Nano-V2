@@ -136,8 +136,8 @@ This work is built upon the following open‑source repositories. We sincerely t
 
 ```bibtex
 @article{liu2026omnifysics-nano-v2,
-  title   = {OmniFysics-Nano-V2: Understanding the Physical World Across Modalities},
-  author  = {Yizhou Liu, Jinghang Han, Kaixiang Qiu, Qi He, Shunli Wang, Lihua Zhang, Dingkang Yang},
+  title   = {OmniFysics-Nano-V2 Technical Report: Understanding the Physical World Across Modalities},
+  author  = {Yizhou Liu, Jinghang Han, Kaixiang Qiu, Qi He, Minghao Han, Yue Jiang, Xujia Chen, Wei Zou, Shunli Wang, Lihua Zhang, Dingkang Yang},
   journal = {arXiv preprint},
   year    = {2026}
 }
