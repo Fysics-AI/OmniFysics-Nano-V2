@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  📄 <a href="#paper">Paper</a> •
+  📄 <a href="https://arxiv.org/abs/2609.25738">Paper</a> •
   🌐 <a href="https://github.com/Fysics-AI/OmniFysics-Nano-V2.git">Project Page</a> •
   🤗 <a href="https://huggingface.co/Fysics-AI/OmniFysics-Nano-V2">Model</a> •
   📚 <a href="#citation">Citation</a>
