@@ -139,6 +139,9 @@ This work is built upon the following open‑source repositories. We sincerely t
   title   = {OmniFysics-Nano-V2 Technical Report: Understanding the Physical World Across Modalities},
   author  = {Yizhou Liu, Jinghang Han, Kaixiang Qiu, Qi He, Minghao Han, Yue Jiang, Xujia Chen, Wei Zou, Shunli Wang, Lihua Zhang, Dingkang Yang},
   journal = {arXiv preprint},
+  eprint={2609.25738},
+  url={https://arxiv.org/abs/2609.25738}, 
+  primaryClass={cs.AI},
   year    = {2026}
 }
 ```
