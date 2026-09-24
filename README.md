@@ -73,19 +73,19 @@ conda activate OmniFysics-Nano-V2
 
 ## 4.Inference: Multimodal Input & Text Output
 
-`scripts/Inference_Multimodal.py` is the only inference command. Text-only and multimodal inference do not generate speech by default.
+`scripts/Inference_Multimodal.py` is the only inference command. Text-only and multimodal inference do not generate speech by default. Supply media with `--image`, `--video`, or `--audio`:
 
 ```bash
 python scripts/Inference_Multimodal.py --model-path hf_ckpt \
   --prompt "介绍一下你自己"
-```
 
-Supply media with `--image`, `--video`, or `--audio`:
-
-```bash
 python scripts/Inference_Multimodal.py --model-path hf_ckpt \
   --prompt "描述这张图像" \
   --image assets/test_image.png
+
+python scripts/Inference_Multimodal.py --model-path hf_ckpt \
+  --prompt "请你描述一下这个视频" \
+  --video assets/output.mp4
 ```
 
 ## 5.Inference: Multimodal Input & Wav Output

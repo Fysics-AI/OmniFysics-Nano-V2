@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+import uuid
 from dataclasses import dataclass
 from typing import Optional
 
@@ -436,6 +437,61 @@ class Qwen35CosyVoice3OmniInfer(Qwen35WhisperOmniInfer):
             f.write("\n")
         return output_path
 
+    @staticmethod
+    def _decode_speech_tokens_continuously(
+        cosyvoice,
+        speech_tokens: list[torch.Tensor],
+        prompt_token: torch.Tensor,
+        prompt_feat: torch.Tensor,
+        embedding: torch.Tensor,
+        chunk_silence_ms: int = 0,
+    ) -> torch.Tensor:
+        """Decode token chunks with one Flow/HiFT session and one finalization."""
+        wav_segments = []
+        silence_samples = round(cosyvoice.sample_rate * chunk_silence_ms / 1000)
+        this_uuid = f"veomni-cosyvoice3-infer-{uuid.uuid4().hex}"
+        token_offset = 0
+        cumulative_tokens = []
+        pre_lookahead_len = int(getattr(cosyvoice.model.flow, "pre_lookahead_len", 0))
+        cosyvoice.model.hift_cache_dict[this_uuid] = None
+        try:
+            for index, speech_token_chunk in enumerate(speech_tokens):
+                chunk_tokens = speech_token_chunk.detach().cpu().to(torch.int32).flatten()
+                if chunk_tokens.numel() == 0:
+                    continue
+                cumulative_tokens.append(chunk_tokens)
+                is_last_chunk = index == len(speech_tokens) - 1
+                token = torch.cat(cumulative_tokens, dim=0).unsqueeze(0)
+
+                # Streaming Flow needs a small lookahead. Keep it in the cumulative
+                # input and emit it only once the next chunk is available.
+                available_token_end = token.shape[1] if is_last_chunk else token.shape[1] - pre_lookahead_len
+                if not is_last_chunk and available_token_end <= token_offset:
+                    continue
+
+                wav_chunk = cosyvoice.model.token2wav(
+                    token=token,
+                    prompt_token=prompt_token,
+                    prompt_feat=prompt_feat,
+                    embedding=embedding,
+                    token_offset=token_offset,
+                    uuid=this_uuid,
+                    stream=True,
+                    finalize=is_last_chunk,
+                    speed=1.0,
+                ).cpu()
+                if wav_chunk.shape[-1] > 0:
+                    if wav_segments and silence_samples:
+                        wav_segments.append(torch.zeros(wav_chunk.shape[0], silence_samples, dtype=wav_chunk.dtype))
+                    wav_segments.append(wav_chunk)
+                if not is_last_chunk:
+                    token_offset = available_token_end
+        finally:
+            cosyvoice.model.hift_cache_dict.pop(this_uuid, None)
+        if not wav_segments:
+            raise RuntimeError("continuous token2wav produced no waveform")
+        return torch.cat(wav_segments, dim=-1)
+
     def _try_synthesize_wav(
         self,
         speech_tokens: list[torch.Tensor],
@@ -445,7 +501,7 @@ class Qwen35CosyVoice3OmniInfer(Qwen35WhisperOmniInfer):
         speaker_profile: Optional[str] = None,
         speaker_id: Optional[str] = None,
         speed: float = 1.0,
-        chunk_silence_ms: int = 200,
+        chunk_silence_ms: int = 0,
     ) -> tuple[Optional[str], str]:
         if not output_audio_path:
             return None, "Audio waveform synthesis skipped because --output-audio was not provided."
@@ -470,6 +526,11 @@ class Qwen35CosyVoice3OmniInfer(Qwen35WhisperOmniInfer):
             return None, "Audio waveform synthesis skipped because chunk silence must be non-negative."
         if not speech_tokens:
             return None, "Audio waveform synthesis skipped because no speech-token chunks were generated."
+        if speed != 1.0:
+            return None, (
+                "Audio waveform synthesis skipped because continuous CosyVoice3 streaming requires "
+                "--audio-speed 1.0. Apply time scaling after the complete waveform is assembled."
+            )
 
         missing = []
         for module_name in ("onnxruntime", "whisper", "hyperpyyaml"):
@@ -529,45 +590,18 @@ class Qwen35CosyVoice3OmniInfer(Qwen35WhisperOmniInfer):
                 prompt_token = frontend_input["flow_prompt_speech_token"]
                 prompt_feat = frontend_input["prompt_speech_feat"]
                 embedding = frontend_input["flow_embedding"]
-            wav_segments = []
-            silence_samples = 0
-            stream_uuid = f"veomni-cosyvoice3-infer-{id(self)}"
-            cosyvoice.model.hift_cache_dict[stream_uuid] = None
-            cumulative_tokens = []
-            if speed != 1.0:
-                logger.warning("Segmented CosyVoice decoding uses native speed to preserve cross-segment continuity.")
-            for index, speech_token_chunk in enumerate(speech_tokens):
-                cumulative_tokens.extend(speech_token_chunk.detach().cpu().to(torch.int32).tolist())
-                token = torch.tensor(cumulative_tokens, dtype=torch.int32).unsqueeze(0)
-                is_final = index == len(speech_tokens) - 1
-                try:
-                    wav_chunk = cosyvoice.model.token2wav(
-                        token=token,
-                        prompt_token=prompt_token,
-                        prompt_feat=prompt_feat,
-                        embedding=embedding,
-                        token_offset=len(cumulative_tokens) - len(speech_token_chunk),
-                        uuid=stream_uuid,
-                        stream=True,
-                        finalize=is_final,
-                        # A cached streaming decode cannot apply speed on the
-                        # final call; keep all chunks at native speed so the
-                        # acoustic state remains continuous.
-                        speed=1.0,
-                    ).cpu()
-                finally:
-                    if is_final:
-                        cosyvoice.model.hift_cache_dict.pop(stream_uuid, None)
-                if wav_segments and silence_samples:
-                    wav_segments.append(torch.zeros(wav_chunk.shape[0], silence_samples, dtype=wav_chunk.dtype))
-                wav_segments.append(wav_chunk)
-            wav = torch.cat(wav_segments, dim=-1)
+            wav = self._decode_speech_tokens_continuously(
+                cosyvoice,
+                speech_tokens,
+                prompt_token,
+                prompt_feat,
+                embedding,
+                chunk_silence_ms=chunk_silence_ms,
+            )
             os.makedirs(os.path.dirname(os.path.abspath(output_audio_path)) or ".", exist_ok=True)
             torchaudio.save(output_audio_path, wav, cosyvoice.sample_rate)
             return output_audio_path, ""
         except Exception as exc:
-            if "stream_uuid" in locals():
-                cosyvoice.model.hift_cache_dict.pop(stream_uuid, None)
             return None, f"Audio waveform synthesis failed: {exc!r}. Speech tokens were generated successfully."
 
     def generate_with_audio(
@@ -595,7 +629,7 @@ class Qwen35CosyVoice3OmniInfer(Qwen35WhisperOmniInfer):
         max_token_text_ratio: float = 20.0,
         max_speech_tokens: Optional[int] = None,
         speech_chunk_size: int = 100,
-        speech_chunk_silence_ms: int = 200,
+        speech_chunk_silence_ms: int = 0,
         audio_speed: float = 1.0,
         bypass_text_condition_bridge: bool = False,
     ) -> AudioGenerationResult:
@@ -805,8 +839,8 @@ def build_arg_parser():
     parser.add_argument(
         "--speech-chunk-silence-ms",
         type=int,
-        default=200,
-        help="Legacy gap setting; streaming chunk synthesis keeps segments continuous and does not insert a gap.",
+        default=0,
+        help="Optional silence inserted between streamed speech chunks (default: 0 ms).",
     )
     parser.add_argument(
         "--bypass-text-condition-bridge",
